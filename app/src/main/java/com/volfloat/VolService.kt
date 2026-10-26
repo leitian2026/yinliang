@@ -91,7 +91,7 @@ class VolService : AccessibilityService() {
 
     private fun evaluate() {
         if (!::root.isInitialized) return
-        val want = current in selected
+        val want = current in selected || current == packageName
         if (want && !shown) show() else if (!want && shown) hide()
     }
 
