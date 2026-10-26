@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="a11y_desc">用于判断当前前台应用，只在你勾选的应用里显示音量浮窗。只读取窗口所属的应用包名，不读取屏幕文字。</string>
+    <string name="app_name">音量浮窗</string>
 </resources>
