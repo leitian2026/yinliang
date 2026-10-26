@@ -15,6 +15,7 @@ import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.Switch
 import android.widget.TextView
 
 class MainActivity : Activity() {
@@ -32,6 +33,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("cfg", MODE_PRIVATE)
+        Logger.enabled = prefs.getBoolean("log_on", false)
         selected.addAll(prefs.getStringSet("apps", emptySet()) ?: emptySet())
 
         val root = LinearLayout(this).apply {
@@ -40,6 +42,27 @@ class MainActivity : Activity() {
         }
         status = TextView(this).apply { textSize = 15f }
         root.addView(status)
+        val logRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        logRow.addView(
+            Switch(this).apply {
+                text = "记录日志"
+                isChecked = prefs.getBoolean("log_on", false)
+                setOnCheckedChangeListener { _, on ->
+                    prefs.edit().putBoolean("log_on", on).apply()
+                    Logger.enabled = on
+                    if (on) Logger.w(this@MainActivity, "日志已开启")
+                }
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        logRow.addView(Button(this).apply {
+            text = "查看日志"
+            setOnClickListener { startActivity(Intent(this@MainActivity, LogActivity::class.java)) }
+        })
+        root.addView(logRow)
         root.addView(TextView(this).apply {
             text = "勾选的应用在前台时才显示音量浮窗；拖动浮窗中间的数字可以移动位置。"
             textSize = 13f
