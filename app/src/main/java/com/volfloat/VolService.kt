@@ -2,6 +2,7 @@ package com.volfloat
 
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -20,9 +21,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.inputmethod.InputMethodManager
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 class VolService : AccessibilityService() {
 
@@ -33,11 +35,14 @@ class VolService : AccessibilityService() {
     private lateinit var tv: TextView
     private lateinit var lp: WindowManager.LayoutParams
     private val handler = Handler(Looper.getMainLooper())
+    private val repeats = ArrayList<Runnable>()
 
     private var shown = false
     private var receiverOn = false
     private var current = ""
     private var selected: Set<String> = emptySet()
+
+    private val refreshRunnable = Runnable { refreshForeground() }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -49,7 +54,7 @@ class VolService : AccessibilityService() {
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "apps") {
             selected = loadSelected()
-            evaluate()
+            refreshForeground()
         }
     }
 
@@ -60,38 +65,50 @@ class VolService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        if (::root.isInitialized) return
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        am = getSystemService(AUDIO_SERVICE) as AudioManager
-        prefs = getSharedPreferences("cfg", MODE_PRIVATE)
+        connected = true
+        if (!::root.isInitialized) {
+            wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            am = getSystemService(AUDIO_SERVICE) as AudioManager
+            prefs = getSharedPreferences("cfg", MODE_PRIVATE)
+            selected = loadSelected()
+            buildView()
+        }
         selected = loadSelected()
-        buildView()
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        refreshForeground()
     }
 
+    // 窗口变化时合并成一次检查（事件驱动，不轮询）
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName) {
-            // 自己的浮窗不算前台，只有主界面才算
-            if (event.className?.toString() != MainActivity::class.java.name) return
-        } else if (pkg in IGNORED || isIme(pkg)) {
-            return
-        }
-        current = pkg
-        evaluate()
+        if (event == null) return
+        handler.removeCallbacks(refreshRunnable)
+        handler.postDelayed(refreshRunnable, 80)
     }
 
     override fun onInterrupt() {}
 
-    private fun isIme(pkg: String): Boolean {
-        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-        return imm.enabledInputMethodList.any { it.packageName == pkg }
+    /** 从真实窗口列表里取最前面的应用窗口所属的包名 */
+    private fun topAppPackage(): String? {
+        val ws = try { windows } catch (_: Exception) { return null }
+        var fallback: String? = null
+        for (w in ws) {
+            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val p = w.root?.packageName?.toString() ?: continue
+            if (w.isActive) return p
+            if (fallback == null) fallback = p
+        }
+        return fallback
+    }
+
+    private fun refreshForeground() {
+        if (!::root.isInitialized) return
+        current = topAppPackage() ?: ""
+        evaluate()
     }
 
     private fun evaluate() {
-        if (!::root.isInitialized) return
-        val want = current in selected || current == packageName
+        val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+        val want = !km.isKeyguardLocked && (current in selected || current == packageName)
         if (want && !shown) show() else if (!want && shown) hide()
     }
 
@@ -103,9 +120,12 @@ class VolService : AccessibilityService() {
 
     private fun show() {
         clamp()
+        root.getChildAt(0).alpha = 1f
+        root.getChildAt(2).alpha = 1f
         try {
             wm.addView(root, lp)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Toast.makeText(this, "浮窗添加失败：" + e.message, Toast.LENGTH_LONG).show()
             return
         }
         shown = true
@@ -120,7 +140,7 @@ class VolService : AccessibilityService() {
     }
 
     private fun hide() {
-        handler.removeCallbacksAndMessages(null)
+        repeats.forEach { handler.removeCallbacks(it) }
         if (receiverOn) {
             try { unregisterReceiver(receiver) } catch (_: Exception) {}
             receiverOn = false
@@ -200,6 +220,7 @@ class VolService : AccessibilityService() {
                 handler.postDelayed(this, 50)
             }
         }
+        repeats.add(repeat)
         return TextView(this).apply {
             text = label
             setTextColor(Color.WHITE)
@@ -256,17 +277,15 @@ class VolService : AccessibilityService() {
     }
 
     private fun cleanup() {
+        connected = false
+        handler.removeCallbacks(refreshRunnable)
         if (!::root.isInitialized) return
         if (shown) hide()
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
     }
 
     companion object {
-        private val IGNORED = setOf(
-            "com.android.systemui",
-            "android",
-            "com.android.permissioncontroller",
-            "com.google.android.permissioncontroller"
-        )
+        @Volatile
+        var connected = false
     }
 }
