@@ -67,14 +67,30 @@ class MainActivity : Activity() {
         })
         root.addView(logRow)
         root.addView(TextView(this).apply {
-            text = "勾选的应用在前台时才显示音量浮窗；拖动浮窗中间的数字可以移动位置。"
+            text = "勾选的应用在前台时才显示音量浮窗（用 root 判断前台应用）；拖动浮窗中间的数字可以移动位置。"
             textSize = 13f
             setPadding(0, dp(4), 0, dp(4))
         })
+        root.addView(
+            Switch(this).apply {
+                text = "启用浮窗服务（开机自启）"
+                isChecked = prefs.getBoolean("run_on", true)
+                setOnCheckedChangeListener { _, on ->
+                    prefs.edit().putBoolean("run_on", on).apply()
+                    if (on) startFloat() else stopService(Intent(this@MainActivity, FloatService::class.java))
+                    status.postDelayed({ updateStatus() }, 1500)
+                }
+            }
+        )
         root.addView(Button(this).apply {
-            text = "打开无障碍设置"
+            text = "打开悬浮窗权限设置"
             setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                )
             }
         })
 
@@ -137,16 +153,29 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun startFloat() {
+        try {
+            startForegroundService(Intent(this, FloatService::class.java))
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun updateStatus() {
+        val rootText = when (FgWatcher.rootOk) {
+            true -> "可用"
+            false -> "不可用（请在 Magisk / KernelSU 里给本应用授权）"
+            null -> "检测中"
+        }
+        val overlay = if (Settings.canDrawOverlays(this)) "已授权" else "未授权（root 会自动授予，失败请点下方按钮手动开启）"
+        status.text = "浮窗服务：" + (if (FloatService.running) "运行中" else "未运行") +
+            "\nRoot：" + rootText +
+            "\n悬浮窗权限：" + overlay
+    }
+
     override fun onResume() {
         super.onResume()
-        val enabled = Settings.Secure.getString(
-            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: ""
-        status.text = when {
-            VolService.connected -> "无障碍服务：运行中"
-            enabled.contains("$packageName/") ->
-                "无障碍服务：设置里显示已开启，但没有在运行（关掉再打开一次；电量设为「无限制」）"
-            else -> "无障碍服务：未开启（请到无障碍设置里打开「音量浮窗」）"
-        }
+        if (prefs.getBoolean("run_on", true)) startFloat()
+        updateStatus()
+        status.postDelayed({ updateStatus() }, 1500)
     }
 }
