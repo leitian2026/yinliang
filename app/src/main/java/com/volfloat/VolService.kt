@@ -3,6 +3,10 @@ package com.volfloat
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.KeyguardManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.pm.ServiceInfo
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -86,7 +90,32 @@ class VolService : AccessibilityService() {
         Logger.enabled = prefs.getBoolean("log_on", false)
         Logger.w(this, "服务已连接 勾选: ${selected.joinToString()}")
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        startFg()
         refreshForeground()
+    }
+
+    // 前台服务：防止系统（MIUI 冻结/省电策略）在后台冻结本进程，
+    // 否则切到其他应用后收不到窗口事件，浮窗就不会出现
+    private fun startFg() {
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(
+                NotificationChannel("keep", "保活", NotificationManager.IMPORTANCE_MIN)
+            )
+            val n = Notification.Builder(this, "keep")
+                .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+                .setContentTitle("音量浮窗运行中")
+                .setOngoing(true)
+                .build()
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(1, n)
+            }
+            Logger.w(this, "前台服务已启动")
+        } catch (e: Exception) {
+            Logger.w(this, "前台服务启动失败: ${e.message}")
+        }
     }
 
     // 窗口变化时合并成一次检查（事件驱动，不轮询）
@@ -336,6 +365,7 @@ class VolService : AccessibilityService() {
         connected = false
         Logger.w(this, "服务断开")
         handler.removeCallbacks(refreshRunnable)
+        try { stopForeground(true) } catch (_: Exception) {}
         if (!::root.isInitialized) return
         if (shown) hide()
         prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
