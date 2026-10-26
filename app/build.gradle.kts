@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // 每次 GitHub 构建自动递增，保证可以覆盖安装
         versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
-        versionName = "2.2"
+        versionName = "2.4"
     }
 
     signingConfigs {
