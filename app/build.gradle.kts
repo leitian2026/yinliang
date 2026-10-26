@@ -11,8 +11,18 @@ android {
         applicationId = "com.volfloat"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        // 每次 GitHub 构建自动递增，保证可以覆盖安装
+        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
+        versionName = "2.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.jks")
+            storePassword = "volfloat"
+            keyAlias = "vf"
+            keyPassword = "volfloat"
+        }
     }
 
     buildTypes {
@@ -23,7 +33,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
