@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
@@ -39,7 +40,7 @@ class VolService : AccessibilityService() {
 
     private var shown = false
     private var receiverOn = false
-    private var current = ""
+    private var visible: Set<String> = emptySet()
     private var selected: Set<String> = emptySet()
 
     private val refreshRunnable = Runnable { refreshForeground() }
@@ -87,28 +88,35 @@ class VolService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    /** 从真实窗口列表里取最前面的应用窗口所属的包名 */
-    private fun topAppPackage(): String? {
-        val ws = try { windows } catch (_: Exception) { return null }
-        var fallback: String? = null
-        for (w in ws) {
+    /**
+     * 从窗口列表里取出当前看得见的应用窗口的包名（支持小窗、分屏）。
+     * 从上往下收集，遇到铺满屏幕的窗口就停，它下面的窗口是被挡住的。
+     */
+    private fun visibleAppPackages(): Set<String> {
+        val ws = try { windows } catch (_: Exception) { return emptySet() }
+        val m = resources.displayMetrics
+        val r = Rect()
+        val out = HashSet<String>()
+        for (w in ws.sortedByDescending { it.layer }) {
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
             val p = w.root?.packageName?.toString() ?: continue
-            if (w.isActive) return p
-            if (fallback == null) fallback = p
+            out.add(p)
+            w.getBoundsInScreen(r)
+            if (r.width() >= m.widthPixels * 0.9 && r.height() >= m.heightPixels * 0.9) break
         }
-        return fallback
+        return out
     }
 
     private fun refreshForeground() {
         if (!::root.isInitialized) return
-        current = topAppPackage() ?: ""
+        visible = visibleAppPackages()
         evaluate()
     }
 
     private fun evaluate() {
         val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-        val want = !km.isKeyguardLocked && (current in selected || current == packageName)
+        val want = !km.isKeyguardLocked &&
+            (packageName in visible || visible.any { it in selected })
         if (want && !shown) show() else if (!want && shown) hide()
     }
 
