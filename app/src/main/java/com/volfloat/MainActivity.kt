@@ -116,7 +116,11 @@ class MainActivity : Activity() {
         val enabled = Settings.Secure.getString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: ""
-        status.text = if (enabled.contains("$packageName/"))
-            "无障碍服务：已开启" else "无障碍服务：未开启（请到无障碍设置里打开「音量浮窗」）"
+        status.text = when {
+            VolService.connected -> "无障碍服务：运行中"
+            enabled.contains("$packageName/") ->
+                "无障碍服务：设置里显示已开启，但没有在运行（关掉再打开一次；电量设为「无限制」）"
+            else -> "无障碍服务：未开启（请到无障碍设置里打开「音量浮窗」）"
+        }
     }
 }
