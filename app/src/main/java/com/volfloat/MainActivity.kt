@@ -34,6 +34,9 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("cfg", MODE_PRIVATE)
         Logger.enabled = prefs.getBoolean("log_on", false)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
+        }
         selected.addAll(prefs.getStringSet("apps", emptySet()) ?: emptySet())
 
         val root = LinearLayout(this).apply {
