@@ -117,23 +117,32 @@ class VolService : AccessibilityService() {
         val m = resources.displayMetrics
         val r = Rect()
         val out = HashSet<String>()
+        val detail = StringBuilder()
         var apps = 0
         var nullRoot = 0
         for (w in ws.sortedByDescending { it.layer }) {
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
             apps++
             val p = w.root?.packageName?.toString()
+            w.getBoundsInScreen(r)
+            detail.append(" [层${w.layer} ${p ?: "null"} ${r.width()}x${r.height()}]")
+            // 系统界面（手势条、导航层等）的应用类窗口不是真正的前台应用：
+            // 跳过它，也不能让它触发“铺满屏幕就停”，否则下面的真正应用会被漏掉
+            if (p == "com.android.systemui") continue
             if (p == null) {
                 nullRoot++
                 if (eventPkg.isNotEmpty()) out.add(eventPkg)
             } else {
                 out.add(p)
             }
-            w.getBoundsInScreen(r)
             if (r.width() >= m.widthPixels * 0.9 && r.height() >= m.heightPixels * 0.9) break
         }
+        if (out.isEmpty()) {
+            val a = try { rootInActiveWindow?.packageName?.toString() } catch (e: Exception) { null }
+            if (a != null && a != "com.android.systemui") out.add(a)
+        }
         if (out.isEmpty() && eventPkg.isNotEmpty()) out.add(eventPkg)
-        scanInfo = "窗口${ws.size} 应用窗口$apps 空root$nullRoot 事件=$eventPkg"
+        scanInfo = "窗口${ws.size} 应用窗口$apps 空root$nullRoot 事件=$eventPkg 明细:$detail"
         return out
     }
 
