@@ -41,6 +41,10 @@ class VolService : AccessibilityService() {
     private var shown = false
     private var receiverOn = false
     private var visible: Set<String> = emptySet()
+    private var eventPkg = ""
+    private var scanInfo = ""
+    private var lastInfo = ""
+    private var locked = false
     private var selected: Set<String> = emptySet()
 
     private val refreshRunnable = Runnable { refreshForeground() }
@@ -53,8 +57,12 @@ class VolService : AccessibilityService() {
 
     // 必须持有强引用，SharedPreferences 只保存弱引用
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "apps") {
+        if (key == "log_on") {
+            Logger.enabled = prefs.getBoolean("log_on", false)
+            Logger.w(this, "日志开关变化 -> ${Logger.enabled}")
+        } else if (key == "apps") {
             selected = loadSelected()
+            Logger.w(this, "勾选变化: ${selected.joinToString()}")
             refreshForeground()
         }
     }
@@ -75,6 +83,8 @@ class VolService : AccessibilityService() {
             buildView()
         }
         selected = loadSelected()
+        Logger.enabled = prefs.getBoolean("log_on", false)
+        Logger.w(this, "服务已连接 勾选: ${selected.joinToString()}")
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
         refreshForeground()
     }
@@ -82,6 +92,13 @@ class VolService : AccessibilityService() {
     // 窗口变化时合并成一次检查（事件驱动，不轮询）
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val p = event.packageName?.toString()
+            if (p != null && p != packageName && p != "com.android.systemui" && p != "android") {
+                eventPkg = p
+            }
+            Logger.w(this, "事件 窗口状态 包=${event.packageName} 类=${event.className}")
+        }
         handler.removeCallbacks(refreshRunnable)
         handler.postDelayed(refreshRunnable, 80)
     }
@@ -93,17 +110,30 @@ class VolService : AccessibilityService() {
      * 从上往下收集，遇到铺满屏幕的窗口就停，它下面的窗口是被挡住的。
      */
     private fun visibleAppPackages(): Set<String> {
-        val ws = try { windows } catch (_: Exception) { return emptySet() }
+        val ws = try { windows } catch (e: Exception) {
+            scanInfo = "读取窗口失败:" + e.message
+            return emptySet()
+        }
         val m = resources.displayMetrics
         val r = Rect()
         val out = HashSet<String>()
+        var apps = 0
+        var nullRoot = 0
         for (w in ws.sortedByDescending { it.layer }) {
             if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
-            val p = w.root?.packageName?.toString() ?: continue
-            out.add(p)
+            apps++
+            val p = w.root?.packageName?.toString()
+            if (p == null) {
+                nullRoot++
+                if (eventPkg.isNotEmpty()) out.add(eventPkg)
+            } else {
+                out.add(p)
+            }
             w.getBoundsInScreen(r)
             if (r.width() >= m.widthPixels * 0.9 && r.height() >= m.heightPixels * 0.9) break
         }
+        if (out.isEmpty() && eventPkg.isNotEmpty()) out.add(eventPkg)
+        scanInfo = "窗口${ws.size} 应用窗口$apps 空root$nullRoot 事件=$eventPkg"
         return out
     }
 
@@ -111,11 +141,17 @@ class VolService : AccessibilityService() {
         if (!::root.isInitialized) return
         visible = visibleAppPackages()
         evaluate()
+        val info = "识别 $scanInfo 前台=${visible.joinToString()} 锁屏=$locked 浮窗=$shown"
+        if (info != lastInfo) {
+            lastInfo = info
+            Logger.w(this, info)
+        }
     }
 
     private fun evaluate() {
         val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-        val want = !km.isKeyguardLocked &&
+        locked = km.isKeyguardLocked
+        val want = !locked &&
             (packageName in visible || visible.any { it in selected })
         if (want && !shown) show() else if (!want && shown) hide()
     }
@@ -133,10 +169,12 @@ class VolService : AccessibilityService() {
         try {
             wm.addView(root, lp)
         } catch (e: Exception) {
+            Logger.w(this, "浮窗添加失败: ${e.message}")
             Toast.makeText(this, "浮窗添加失败：" + e.message, Toast.LENGTH_LONG).show()
             return
         }
         shown = true
+        Logger.w(this, "显示浮窗")
         val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
@@ -155,6 +193,7 @@ class VolService : AccessibilityService() {
         }
         try { wm.removeView(root) } catch (_: Exception) {}
         shown = false
+        Logger.w(this, "隐藏浮窗")
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -286,6 +325,7 @@ class VolService : AccessibilityService() {
 
     private fun cleanup() {
         connected = false
+        Logger.w(this, "服务断开")
         handler.removeCallbacks(refreshRunnable)
         if (!::root.isInitialized) return
         if (shown) hide()
